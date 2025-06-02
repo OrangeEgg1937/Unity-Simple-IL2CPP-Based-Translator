@@ -1,0 +1,86 @@
+plugins {
+    alias(libs.plugins.android.library)
+}
+
+android {
+    namespace "com.example.unity_il2cpp_translator"
+    compileSdk 34
+
+    compileSdk 34
+
+    buildFeatures {
+        prefab true
+    }
+
+    defaultConfig {
+        minSdk 24
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles "consumer-rules.pro"
+        externalNativeBuild {
+            cmake {
+                cppFlags ''
+            }
+        }
+
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        debug {
+            ndk {
+                debugSymbolLevel 'FULL' // Ensures FULL debug symbols are generated
+            }
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+    packagingOptions {
+        exclude '**/libshadowhook.so'
+        exclude '**/libbytehook.so'
+        doNotStrip "**/*.so"
+    }
+}
+
+task pushSo(dependsOn: 'externalNativeBuildDebug') {
+    doLast {
+        // Create the directory on the device
+        exec {
+            commandLine 'adb', 'shell', 'mkdir', '-p', '/sdcard/Android/data/com.DefaultCompany.DemoChatGame/files/custom/arm64-v8a'
+        }
+
+        // Get all .so files for arm64-v8a
+        def soFiles = fileTree(dir: 'build/intermediates/cmake/debug/obj/arm64-v8a', include: '*.so')
+
+        // Push each .so file to the device
+        soFiles.each { file ->
+            exec {
+                commandLine 'adb', 'push', file.absolutePath, '/sdcard/Android/data/com.DefaultCompany.DemoChatGame/files/custom/arm64-v8a/' + file.name
+            }
+        }
+    }
+}
+
+dependencies {
+
+    implementation libs.appcompat
+    implementation libs.material
+    implementation libs.shadowhook
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+}
