@@ -7,6 +7,7 @@ find_package(shadowhook REQUIRED CONFIG)
 add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
         unity_il2cpp_translator.cpp
+        translator.cpp
         il2cpp_manager.cpp)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}

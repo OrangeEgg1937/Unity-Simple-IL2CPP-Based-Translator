@@ -4,8 +4,10 @@
 
 #include "shadowhook.h"
 #include "il2cpp_manager.h"
+#include "translator.h"
 
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, "Il2cpp-Manager", __VA_ARGS__)
+#define TAG "Il2cpp-Manager"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LIB_NAME "libil2cpp.so"
 
 std::map<std::string, Il2CppClass *> TMP_klass_map;
@@ -31,6 +33,8 @@ const Il2CppType* (*il2cpp_method_get_param)(const MethodInfo *method, uint32_t 
 
 Il2CppClass* (*il2cpp_class_from_il2cpp_type)(const Il2CppType* type) = nullptr;
 
+Il2CppString* (*il2cpp_string_new)(const char* str) = nullptr;
+
 /**
  * Function pointers for Convert C# string to C++ string
  */
@@ -47,47 +51,9 @@ void (*TextMeshProUGUI_onEnable)(void *instance) = nullptr;
 
 void (*TMP_Text_SetText)(void *instance, Il2CppString *text) = nullptr;
 
-namespace TextMeshProUGUI_onEnable_hook {
-    void *orig;
-    void *stub;
-
-    void proxy(void *instance) {
-        SHADOWHOOK_STACK_SCOPE();
-
-        LOGD("TextMeshProUGUI_onEnable_hook: instance=%p", instance);
-        if (TMP_Text_get_text != nullptr) {
-            auto *text = TMP_Text_get_text(instance);
-            if (text != nullptr) {
-                Il2CppChar *chars = il2cpp_string_chars(text);
-                std::u16string str(chars, text->length);
-                LOGD("TextMeshProUGUI_onEnable_hook: text=%s",
-                     std::string(str.begin(), str.end()).c_str());
-            } else {
-                LOGD("TextMeshProUGUI_onEnable_hook: text is NULL");
-            }
-        }
-        SHADOWHOOK_CALL_PREV(proxy, instance);
-    }
-
-    void hook() {
-        if (TextMeshProUGUI_onEnable == nullptr) {
-            __android_log_print(ANDROID_LOG_ERROR, "test", "TextMeshProUGUI_onEnable is NULL");
-            return;
-        }
-
-        stub = shadowhook_hook_func_addr(
-                (void *) TextMeshProUGUI_onEnable,
-                (void *) proxy,
-                &orig
-        );
-
-        int err = shadowhook_get_errno();
-        const char *error_msg = shadowhook_to_errmsg(err);
-        __android_log_print(ANDROID_LOG_WARN, "test", "(%p)hook return: %p, %d - %s",
-                            TextMeshProUGUI_onEnable, stub, err,
-                            error_msg);
-    }
-}
+/**
+ * Helper function to convert std::string to il2cpp_string
+ */
 
 namespace TMP_Text_set_text_hook {
     void *orig;
@@ -96,19 +62,23 @@ namespace TMP_Text_set_text_hook {
     void proxy(void *instance, Il2CppString *text) {
         SHADOWHOOK_STACK_SCOPE();
 
-        LOGD("TMP_Text_set_text_hook: instance=%p, text=%p", instance, text);
         if (text != nullptr) {
             Il2CppChar *chars = il2cpp_string_chars(text);
             std::u16string str(chars, text->length);
             LOGD("TMP_Text_set_text_hook: current text=%s",
                  std::string(str.begin(), str.end()).c_str());
+            auto replaced_text = translator::translate(std::string(str.begin(), str.end()));
+            LOGD("TMP_Text_set_text_hook: replaced text=%s", replaced_text.c_str());
+            auto new_text = il2cpp_string_new(replaced_text.c_str());
+            SHADOWHOOK_CALL_PREV(proxy, instance, new_text);
+        } else {
+            SHADOWHOOK_CALL_PREV(proxy, instance, text);
         }
-        SHADOWHOOK_CALL_PREV(proxy, instance, text);
     }
 
     void hook() {
         if (TMP_Text_set_text == nullptr) {
-            __android_log_print(ANDROID_LOG_ERROR, "test", "TMP_Text_set_text is NULL");
+            __android_log_print(ANDROID_LOG_ERROR, TAG, "TMP_Text_set_text is NULL");
             return;
         }
 
@@ -120,8 +90,61 @@ namespace TMP_Text_set_text_hook {
 
         int err = shadowhook_get_errno();
         const char *error_msg = shadowhook_to_errmsg(err);
-        __android_log_print(ANDROID_LOG_WARN, "test", "(%p)hook return: %p, %d - %s",
+        __android_log_print(ANDROID_LOG_WARN, TAG, "(%p)hook return: %p, %d - %s",
                             TMP_Text_set_text, stub, err,
+                            error_msg);
+    }
+}
+
+namespace TextMeshProUGUI_onEnable_hook {
+    void *orig;
+    void *stub;
+
+    void proxy(void *instance) {
+        SHADOWHOOK_STACK_SCOPE();
+        SHADOWHOOK_CALL_PREV(proxy, instance);
+
+        LOGD("TextMeshProUGUI_onEnable_hook: instance=%p", instance);
+        if (TMP_Text_get_text != nullptr) {
+            auto *text = TMP_Text_get_text(instance);
+            if (text != nullptr) {
+                Il2CppChar *chars = il2cpp_string_chars(text);
+                std::u16string str(chars, text->length);
+                LOGD("TextMeshProUGUI_onEnable_hook: text=%s",
+                     std::string(str.begin(), str.end()).c_str());
+
+                // Call set_text to replace the text
+                if (TMP_Text_set_text != nullptr) {
+                    auto replaced_text = translator::translate(std::string(str.begin(), str.end()));
+                    LOGD("TextMeshProUGUI_onEnable_hook: replaced text=%s", replaced_text.c_str());
+                    auto new_text = il2cpp_string_new(replaced_text.c_str());
+                    reinterpret_cast<void (*)(void *, Il2CppString *)>(TMP_Text_set_text)(instance, new_text);
+                } else {
+                    LOGD("TextMeshProUGUI_onEnable_hook: TMP_Text_set_text is NULL");
+                }
+
+            } else {
+                LOGD("TextMeshProUGUI_onEnable_hook: text is NULL");
+            }
+        }
+    }
+
+    void hook() {
+        if (TextMeshProUGUI_onEnable == nullptr) {
+            __android_log_print(ANDROID_LOG_ERROR, TAG, "TextMeshProUGUI_onEnable is NULL");
+            return;
+        }
+
+        stub = shadowhook_hook_func_addr(
+                (void *) TextMeshProUGUI_onEnable,
+                (void *) proxy,
+                &orig
+        );
+
+        int err = shadowhook_get_errno();
+        const char *error_msg = shadowhook_to_errmsg(err);
+        __android_log_print(ANDROID_LOG_WARN, TAG, "(%p)hook return: %p, %d - %s",
+                            TextMeshProUGUI_onEnable, stub, err,
                             error_msg);
     }
 }
@@ -137,10 +160,15 @@ namespace TMP_Text_SetText_hook {
         if (text != nullptr) {
             Il2CppChar *chars = il2cpp_string_chars(text);
             std::u16string str(chars, text->length);
-            LOGD("TMP_Text_SetText_hook: current text=%s",
+            LOGD("TMP_Text_set_text_hook: current text=%s",
                  std::string(str.begin(), str.end()).c_str());
+            auto replaced_text = translator::translate(std::string(str.begin(), str.end()));
+            LOGD("TMP_Text_set_text_hook: replaced text=%s", replaced_text.c_str());
+            auto new_text = il2cpp_string_new(replaced_text.c_str());
+            SHADOWHOOK_CALL_PREV(proxy, instance, new_text);
+        } else {
+            SHADOWHOOK_CALL_PREV(proxy, instance, text);
         }
-        SHADOWHOOK_CALL_PREV(proxy, instance, text);
     }
 
     void hook() {
@@ -195,13 +223,74 @@ namespace il2cpp_assembly_get_image_hook {
     void *orig;
     void *stub;
 
+    void TMP_TextMeshProUGUI_Class_init() {
+        // Get the TextMeshProUGUI Class out
+        auto it = TMP_klass_map.find("TextMeshProUGUI");
+        if (it != TMP_klass_map.end()) {
+            Il2CppClass *tmp_text_class = it->second;
+            LOGD("Found TextMeshProUGUI class: %p", tmp_text_class);
+            void *_iter = nullptr;
+            while (auto method_info = il2cpp_class_get_methods(tmp_text_class, &_iter)) {
+                auto method_name = il2cpp_method_get_name(method_info);
+                if (strcmp(method_name, "OnEnable") == 0) {
+                    LOGD("Found method: %s", method_name);
+                    TextMeshProUGUI_onEnable = (void (*)(void *)) method_info->methodPointer;
+                    // Hook the OnEnable method
+                    TextMeshProUGUI_onEnable_hook::hook();
+                }
+            }
+
+        } else {
+            LOGD("TMP_Text class not found in Unity.TextMeshPro.dll");
+        }
+    }
+
+    void TMP_Text_class_init() {
+        // Get the TMP_Text Class out
+        auto it2 = TMP_klass_map.find("TMP_Text");
+        if (it2 != TMP_klass_map.end()) {
+            Il2CppClass *tmp_text_class = it2->second;
+            LOGD("Found TMP_Text class: %p", tmp_text_class);
+            void *_iter = nullptr;
+            while (auto method_info = il2cpp_class_get_methods(tmp_text_class, &_iter)) {
+                auto method_name = il2cpp_method_get_name(method_info);
+                auto param_count = il2cpp_method_get_param_count(method_info);
+                LOGD("[TMP_Text] Found method: %s", method_name);
+                if (strcmp(method_name, "get_text") == 0) {
+                    LOGD("Found method: %s", method_name);
+                    TMP_Text_get_text = (Il2CppString *(*)(void *)) method_info->methodPointer;
+                }
+                if (strcmp(method_name, "set_text") == 0) {
+                    LOGD("Found method: %s", method_name);
+                    TMP_Text_set_text = (void (*)(void *,
+                                                  Il2CppString *)) method_info->methodPointer;
+                    TMP_Text_set_text_hook::hook();
+                }
+                if (strcmp(method_name, "SetText") == 0 && param_count == 1) {
+                    auto *param_type = il2cpp_method_get_param(method_info, 0);
+                    auto *param_class = il2cpp_class_from_il2cpp_type(param_type);
+                    auto *param_class_name = il2cpp_class_get_name(param_class);
+                    LOGD("Found method: %s (param=%s)", method_name, param_class_name);
+                    if (strcmp(param_class_name, "String") == 0) {
+                        LOGD("Found method: %s", method_name);
+                        TMP_Text_SetText = (void (*)(void *,
+                                                     Il2CppString *)) method_info->methodPointer;
+                        TMP_Text_SetText_hook::hook();
+                    }
+                }
+            }
+        } else {
+            LOGD("TMP_Text class not found in Unity.TextMeshPro.dll");
+        }
+    }
+
     void *proxy(Il2CppAssembly *assembly) {
         SHADOWHOOK_STACK_SCOPE();
 
         auto image_ptr = SHADOWHOOK_CALL_PREV(proxy, assembly);
-        //LOGD("il2cpp_assembly_get_image_hook: assembly=%p (%s), image_ptr=%p", assembly, assembly->aname.name, image_ptr);
+        LOGD("il2cpp_assembly_get_image_hook: assembly=%p (%s), image_ptr=%p", assembly, assembly->aname.name, image_ptr);
         if (strcmp(assembly->aname.name, "Unity.TextMeshPro") == 0) {
-            LOGD("Found Unity.TextMeshPro.dll, try to loop its class:");
+            // LOGD("Found Unity.TextMeshPro.dll, try to loop its class:");
             size_t class_count = il2cpp_image_get_class_count((const Il2CppImage *) image_ptr);
             for (size_t i = 0; i < class_count; ++i) {
                 auto *klass = (Il2CppClass *) il2cpp_image_get_class(
@@ -216,62 +305,8 @@ namespace il2cpp_assembly_get_image_hook {
                 TMP_klass_map[class_name] = (Il2CppClass *) klass;
             }
 
-            // Get the TMP_Text Class out
-            auto it = TMP_klass_map.find("TextMeshProUGUI");
-            if (it != TMP_klass_map.end()) {
-                Il2CppClass *tmp_text_class = it->second;
-                LOGD("Found TextMeshProUGUI class: %p", tmp_text_class);
-                void *_iter = nullptr;
-                while (auto method_info = il2cpp_class_get_methods(tmp_text_class, &_iter)) {
-                    auto method_name = il2cpp_method_get_name(method_info);
-                    if (strcmp(method_name, "OnEnable") == 0) {
-                        LOGD("Found method: %s", method_name);
-                        TextMeshProUGUI_onEnable = (void (*)(void *)) method_info->methodPointer;
-                        // Hook the OnEnable method
-                        TextMeshProUGUI_onEnable_hook::hook();
-                    }
-                }
-
-            } else {
-                LOGD("TMP_Text class not found in Unity.TextMeshPro.dll");
-            }
-
-            // Get the TMP_Text Class out
-            auto it2 = TMP_klass_map.find("TMP_Text");
-            if (it2 != TMP_klass_map.end()) {
-                Il2CppClass *tmp_text_class = it2->second;
-                LOGD("Found TMP_Text class: %p", tmp_text_class);
-                void *_iter = nullptr;
-                while (auto method_info = il2cpp_class_get_methods(tmp_text_class, &_iter)) {
-                    auto method_name = il2cpp_method_get_name(method_info);
-                    auto param_count = il2cpp_method_get_param_count(method_info);
-                    LOGD("[TMP_Text] Found method: %s", method_name);
-                    if (strcmp(method_name, "get_text") == 0) {
-                        LOGD("Found method: %s", method_name);
-                        TMP_Text_get_text = (Il2CppString *(*)(void *)) method_info->methodPointer;
-                    }
-                    if (strcmp(method_name, "set_text") == 0) {
-                        LOGD("Found method: %s", method_name);
-                        TMP_Text_set_text = (void (*)(void *,
-                                                      Il2CppString *)) method_info->methodPointer;
-                        TMP_Text_set_text_hook::hook();
-                    }
-                    if (strcmp(method_name, "SetText") == 0 && param_count == 1) {
-                        auto *param_type = il2cpp_method_get_param(method_info, 0);
-                        auto *param_class = il2cpp_class_from_il2cpp_type(param_type);
-                        auto *param_class_name = il2cpp_class_get_name(param_class);
-                        LOGD("Found method: %s (param=%s)", method_name, param_class_name);
-                        if (strcmp(param_class_name, "String") == 0) {
-                            LOGD("Found method: %s", method_name);
-                            TMP_Text_SetText = (void (*)(void *,
-                                                         Il2CppString *)) method_info->methodPointer;
-                            TMP_Text_SetText_hook::hook();
-                        }
-                    }
-                }
-            } else {
-                LOGD("TMP_Text class not found in Unity.TextMeshPro.dll");
-            }
+            TMP_TextMeshProUGUI_Class_init();
+            TMP_Text_class_init();
         }
 
         return image_ptr;
@@ -315,6 +350,8 @@ void il2cpp_manager_init() {
                                                                                               "il2cpp_method_get_param");
         il2cpp_class_from_il2cpp_type = (Il2CppClass *(*)(const Il2CppType *)) shadowhook_dlsym(handle,
                                                                                                   "il2cpp_class_from_il2cpp_type");
+        il2cpp_string_new = (Il2CppString *(*)(const char *)) shadowhook_dlsym(handle,
+                                                                 "il2cpp_string_new");
     } else {
         __android_log_print(ANDROID_LOG_ERROR, "Il2cpp-Manager", "Failed to open %s: %s", LIB_NAME,
                             dlerror());
